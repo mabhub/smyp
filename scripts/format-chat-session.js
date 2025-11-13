@@ -109,6 +109,14 @@ const IGNORE_USER_PROMPTS = [
 // ============================================================================
 
 /**
+ * Composes functions from left to right (pipe pattern)
+ * @param {...Function} fns - Functions to compose
+ * @returns {Function} Composed function
+ * @example compose(fn1, fn2, fn3)(value) === fn3(fn2(fn1(value)))
+ */
+const compose = (...fns) => (value) => fns.reduce((acc, fn) => fn(acc), value);
+
+/**
  * Detects if the file has already been processed
  * @param {string} content - File content
  * @returns {boolean}
@@ -672,8 +680,10 @@ const formatSection = (section, projectRoot) => {
   switch (type) {
     case 'user-prompt': {
       const promptText = Array.isArray(content) ? content.join('\n') : (content || '');
-      const withContextFormatted = formatContextReferences(promptText);
-      const formattedText = forceLineBreaks(withContextFormatted);
+      const formattedText = compose(
+        formatContextReferences,
+        forceLineBreaks
+      )(promptText);
       return `${MARKERS.USER_PROMPT}
 ${VISUAL_MARKERS.USER_PROMPT}
 
@@ -720,10 +730,12 @@ ${VISUAL_MARKERS.AGENT_ACTION_END}
         });
       }
 
-      const withContextFormatted = formatContextReferences(responseText);
-      const withShiftedHeadings = shiftHeadingLevels(withContextFormatted);
-      const withTerminalCommands = formatTerminalCommands(withShiftedHeadings);
-      const formattedText = forceLineBreaks(withTerminalCommands);
+      const formattedText = compose(
+        formatContextReferences,
+        shiftHeadingLevels,
+        formatTerminalCommands,
+        forceLineBreaks
+      )(responseText);
 
       return `${MARKERS.AGENT_RESPONSE}
 ${VISUAL_MARKERS.AGENT_RESPONSE}
@@ -852,9 +864,11 @@ const processContent = (content, { force = false, silent = false, inputFile = 's
   let formattedContent = frontmatter + formattedSections;
 
   // Apply Markdown linting rules
-  formattedContent = ensureMarkdownSpacing(formattedContent);
-  formattedContent = removeTrailingSpaces(formattedContent);
-  formattedContent = cleanExcessiveLineBreaks(formattedContent);
+  formattedContent = compose(
+    ensureMarkdownSpacing,
+    removeTrailingSpaces,
+    cleanExcessiveLineBreaks
+  )(formattedContent);
 
   return formattedContent;
 };
