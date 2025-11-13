@@ -1,0 +1,36 @@
+{
+  "name": "smyp",
+  "version": "0.1.0",
+  "description": "Show Me Your Prompt! A tool to format chat session markdown files.",
+  "main": "scripts/format-chat-session.js",
+  "bin": {
+    "smyp": "./scripts/format-chat-session.js"
+  },
+  "scripts": {
+    "format-chat": "node scripts/format-chat-session.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "chat",
+    "session",
+    "formatter",
+    "markdown",
+    "cli",
+    "conversation",
+    "copilot",
+    "llm"
+  ],
+  "author": "mabhub",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mabhub/smyp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mabhub/smyp/issues"
+  },
+  "homepage": "https://github.com/mabhub/smyp#readme",
+  "type": "module"
+}
