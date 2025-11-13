@@ -1,6 +1,6 @@
 {
   "name": "smyp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Show Me Your Prompt! A tool to format chat session markdown files.",
   "main": "scripts/format-chat-session.js",
   "bin": {
