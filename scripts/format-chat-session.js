@@ -174,6 +174,48 @@ const extractUserIdentifier = (content) => {
 };
 
 /**
+ * Shifts heading levels in text to maintain hierarchy
+ * Converts ## to ###, ### to ####, etc. (max level 6)
+ * @param {string} text - Text to process
+ * @returns {string} Text with shifted heading levels
+ */
+const shiftHeadingLevels = (text) => {
+  const lines = text.split('\n');
+  const result = [];
+  let inCodeBlock = false;
+
+  for (const line of lines) {
+    // Track code blocks to avoid modifying headings inside them
+    if (line.trim().startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      result.push(line);
+      continue;
+    }
+
+    if (inCodeBlock) {
+      result.push(line);
+      continue;
+    }
+
+    // Match markdown headings (## to ######)
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const currentLevel = headingMatch[1].length;
+      const headingText = headingMatch[2];
+
+      // Shift by one level, max level is 6
+      const newLevel = Math.min(currentLevel + 1, 6);
+      const newHeading = '#'.repeat(newLevel) + ' ' + headingText;
+      result.push(newHeading);
+    } else {
+      result.push(line);
+    }
+  }
+
+  return result.join('\n');
+};
+
+/**
  * Adds forced line breaks (markdown) in the text
  * @param {string} text - Text to process
  * @returns {string} Text with forced line breaks
@@ -654,7 +696,8 @@ ${VISUAL_MARKERS.AGENT_ACTION_END}
       }
 
       const withContextFormatted = formatContextReferences(responseText);
-      const formattedText = forceLineBreaks(withContextFormatted);
+      const withShiftedHeadings = shiftHeadingLevels(withContextFormatted);
+      const formattedText = forceLineBreaks(withShiftedHeadings);
 
       return `${MARKERS.AGENT_RESPONSE}
 ${VISUAL_MARKERS.AGENT_RESPONSE}
