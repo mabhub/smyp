@@ -89,6 +89,9 @@ const ACTION_PATTERNS = [
   /^Created \d+ todos/,
 ];
 
+// Pattern to detect terminal commands (kept visible in response flow)
+const TERMINAL_COMMAND_PATTERN = /^Ran terminal command: (.+)$/;
+
 // Noise patterns to ignore (UI artifacts from long chat sessions)
 const NOISE_PATTERNS = [
   /^Continue to iterate\?$/,
@@ -516,6 +519,28 @@ const formatContextReferences = (text) => {
 };
 
 /**
+ * Formats terminal commands inline in the response text
+ * @param {string} text - Text to format
+ * @returns {string} Text with formatted terminal commands
+ */
+const formatTerminalCommands = (text) => {
+  const lines = text.split('\n');
+  const result = [];
+
+  for (const line of lines) {
+    const match = line.match(TERMINAL_COMMAND_PATTERN);
+    if (match) {
+      const command = match[1];
+      result.push(`▶️ **Terminal command:**\n\`\`\`bash\n${command}\n\`\`\``);
+    } else {
+      result.push(line);
+    }
+  }
+
+  return result.join('\n');
+};
+
+/**
  * Cleans excessive blank lines (max 2 consecutive)
  * @param {string} text - Text to clean
  * @returns {string} Cleaned text
@@ -697,7 +722,8 @@ ${VISUAL_MARKERS.AGENT_ACTION_END}
 
       const withContextFormatted = formatContextReferences(responseText);
       const withShiftedHeadings = shiftHeadingLevels(withContextFormatted);
-      const formattedText = forceLineBreaks(withShiftedHeadings);
+      const withTerminalCommands = formatTerminalCommands(withShiftedHeadings);
+      const formattedText = forceLineBreaks(withTerminalCommands);
 
       return `${MARKERS.AGENT_RESPONSE}
 ${VISUAL_MARKERS.AGENT_RESPONSE}
@@ -755,50 +781,51 @@ ${MARKERS.PROCESSED}
 // ============================================================================
 
 /**
- * Formats a chat session file
+ * Processes raw chat session content into formatted markdown
+ * @param {string} content - Raw content to process
  * @param {object} options - Processing options
- * @param {string} options.inputFile - Input file path
- * @param {string} [options.outputFile] - Output file path
  * @param {boolean} [options.force=false] - Force reprocessing even if already processed
+ * @param {boolean} [options.silent=false] - Suppress console output
+ * @param {string} [options.inputFile='stdin'] - Input file name for metadata
+ * @returns {string} Formatted content
  */
-const formatChatSession = ({ inputFile, outputFile, force = false }) => {
-  // Read file
-  const inputPath = resolve(inputFile);
-  let content = readFileSync(inputPath, 'utf-8');
+const processContent = (content, { force = false, silent = false, inputFile = 'stdin' } = {}) => {
+  const log = silent ? () => {} : console.log;
+  const logError = silent ? () => {} : console.error;
 
   // Check if already processed
   if (isAlreadyProcessed(content) && !force) {
-    console.log(TEXTS.ALREADY_PROCESSED);
-    return;
+    log(TEXTS.ALREADY_PROCESSED);
+    return content;
   }
 
   // If force and already processed, remove existing frontmatter
   if (isAlreadyProcessed(content) && force) {
-    // Remove everything from start to end of frontmatter
     content = content.replace(/^---[\s\S]*?---\n\n/, '');
-    console.log('🔄 Forced reprocessing: existing frontmatter removed.');
+    log('🔄 Forced reprocessing: existing frontmatter removed.');
   }
 
   // Extract root path
   const projectRoot = extractProjectRoot(content);
-  console.log(`${TEXTS.DETECTED_PROJECT_ROOT} ${projectRoot || 'None'}`);
+  log(`${TEXTS.DETECTED_PROJECT_ROOT} ${projectRoot || 'None'}`);
 
   // Extract user identifier
   const userIdentifier = extractUserIdentifier(content);
   if (!userIdentifier) {
-    console.error(TEXTS.NO_USER_ID);
-    process.exit(1);
+    logError(TEXTS.NO_USER_ID);
+    if (!silent) process.exit(1);
+    return null;
   }
-  console.log(`${TEXTS.DETECTED_USER_ID} ${userIdentifier}`);
+  log(`${TEXTS.DETECTED_USER_ID} ${userIdentifier}`);
 
   // Parse content
-  console.log(TEXTS.ANALYZING_CONTENT);
+  log(TEXTS.ANALYZING_CONTENT);
   let sections = parseContent(content, userIdentifier);
-  console.log(`   ${TEXTS.FOUND_SECTIONS} ${sections.length} ${TEXTS.SECTIONS_RAW}`);
+  log(`   ${TEXTS.FOUND_SECTIONS} ${sections.length} ${TEXTS.SECTIONS_RAW}`);
 
   // Merge consecutive sections
   sections = mergeSections(sections);
-  console.log(`   ${TEXTS.AFTER_MERGE} ${sections.length} ${TEXTS.SECTIONS}`);
+  log(`   ${TEXTS.AFTER_MERGE} ${sections.length} ${TEXTS.SECTIONS}`);
 
   // Statistics
   const stats = {
@@ -806,15 +833,15 @@ const formatChatSession = ({ inputFile, outputFile, force = false }) => {
     agentResponses: sections.filter(s => s.type === 'agent-response').length,
     agentActions: sections.filter(s => s.type === 'agent-action').length,
   };
-  console.log(`   - ${stats.userPrompts} ${TEXTS.USER_PROMPTS}`);
-  console.log(`   - ${stats.agentResponses} ${TEXTS.AGENT_RESPONSES}`);
-  console.log(`   - ${stats.agentActions} ${TEXTS.ACTION_SEQUENCES}`);
+  log(`   - ${stats.userPrompts} ${TEXTS.USER_PROMPTS}`);
+  log(`   - ${stats.agentResponses} ${TEXTS.AGENT_RESPONSES}`);
+  log(`   - ${stats.agentActions} ${TEXTS.ACTION_SEQUENCES}`);
 
   // Formatting
-  console.log(TEXTS.FORMATTING_CONTENT);
+  log(TEXTS.FORMATTING_CONTENT);
   const frontmatter = generateFrontmatter({
     projectRoot,
-    inputFile: basename(inputPath),
+    inputFile: basename(inputFile),
     processedDate: new Date().toISOString(),
   });
 
@@ -826,26 +853,93 @@ const formatChatSession = ({ inputFile, outputFile, force = false }) => {
 
   // Apply Markdown linting rules
   formattedContent = ensureMarkdownSpacing(formattedContent);
-  // Clean trailing spaces (single always, double at end of paragraph)
   formattedContent = removeTrailingSpaces(formattedContent);
-  // Clean excessive blank lines
-
-  // Clean excessive blank lines
   formattedContent = cleanExcessiveLineBreaks(formattedContent);
+
+  return formattedContent;
+};
+
+/**
+ * Formats a chat session file
+ * @param {object} options - Processing options
+ * @param {string} options.inputFile - Input file path
+ * @param {string} [options.outputFile] - Output file path
+ * @param {boolean} [options.force=false] - Force reprocessing even if already processed
+ */
+const formatChatSession = ({ inputFile, outputFile, force = false }) => {
+  // Read file
+  const inputPath = resolve(inputFile);
+  const content = readFileSync(inputPath, 'utf-8');
+
+  // Process content
+  const formattedContent = processContent(content, {
+    force,
+    silent: false,
+    inputFile: inputPath,
+  });
+
+  if (!formattedContent) {
+    process.exit(1);
+  }
 
   // Write
   const output = outputFile ? resolve(outputFile) : inputPath;
   writeFileSync(output, formattedContent, 'utf-8');
   console.log(`${TEXTS.FILE_SAVED} ${output}`);
-};
-
-// ============================================================================
+};// ============================================================================
 // CLI
 // ============================================================================
 
-const main = () => {
-  const args = process.argv.slice(2);
+/**
+ * Reads from stdin and returns the content as a string
+ * @returns {Promise<string>} Content from stdin
+ */
+const readStdin = () => {
+  return new Promise((resolve) => {
+    let data = '';
+    process.stdin.setEncoding('utf-8');
+    process.stdin.on('data', chunk => data += chunk);
+    process.stdin.on('end', () => resolve(data));
+  });
+};
 
+/**
+ * Checks if stdin has data available (is being piped)
+ * @returns {boolean} True if stdin is piped
+ */
+const isStdinPiped = () => {
+  return !process.stdin.isTTY;
+};
+
+const main = async () => {
+  const args = process.argv.slice(2);
+  const force = args.includes('--force');
+
+  // Check if stdin is being piped
+  if (isStdinPiped() && args.length === 0) {
+    // Stdin mode: read from stdin, write to stdout, silent
+    try {
+      const content = await readStdin();
+      const formattedContent = processContent(content, {
+        force,
+        silent: true,
+        inputFile: 'stdin',
+      });
+
+      if (!formattedContent) {
+        process.exit(1);
+      }
+
+      process.stdout.write(formattedContent);
+      process.exit(0);
+    } catch (error) {
+      process.stderr.write(`Error: ${error.message}\n`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  // File mode: show help if no args
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     console.log(`
 ${TEXTS.CLI_USAGE}
@@ -864,12 +958,15 @@ ${TEXTS.CLI_EXAMPLES}
   ${TEXTS.CLI_EX1}
   ${TEXTS.CLI_EX2}
   ${TEXTS.CLI_EX3}
+
+Pipe mode:
+  cat session.md | smyp > formatted.md
 `);
     process.exit(0);
   }
 
+  // File mode: process files
   const inputFile = args[0];
-  const force = args.includes('--force');
   const outputFile = args.find((arg, i) => i > 0 && !arg.startsWith('--'));
 
   try {
