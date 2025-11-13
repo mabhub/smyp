@@ -53,14 +53,14 @@ const TEXTS = {
   ACTION_SEQUENCES: 'action sequences',
   FORMATTING_CONTENT: '✨ Formatting content...',
   FILE_SAVED: '✅ Formatted file saved:',
-  
+
   // Error messages
   ALREADY_PROCESSED: '⚠️  File already processed. Use --force to reprocess.',
   ERROR_PROCESSING: '❌ Error processing file:',
   NO_USER_ID: '❌ Could not detect user identifier in the file.\n' +
               '   Expected pattern: "username:" at the start of a line.\n' +
               '   Make sure the file contains user prompts in the format "username: <content>".',
-  
+
   // CLI help
   CLI_USAGE: 'Usage: node scripts/format-chat-session.js <input-file> [output-file] [options]',
   CLI_DESC: 'Formats a raw chat session Markdown file into a structured and readable document.',
@@ -87,6 +87,18 @@ const ACTION_PATTERNS = [
   /^Made changes\./,
   /^Summarized conversation history/,
   /^Created \d+ todos/,
+];
+
+// Noise patterns to ignore (UI artifacts from long chat sessions)
+const NOISE_PATTERNS = [
+  /^Continue to iterate\?$/,
+  /^\[object Object\]$/,
+];
+
+// Patterns for user prompts to ignore (continuation confirmations)
+const IGNORE_USER_PROMPTS = [
+  /^@agent Continue:/,
+  /^Continue:/,
 ];
 
 // ============================================================================
@@ -150,7 +162,7 @@ const extractUserIdentifier = (content) => {
     if (match) {
       const identifier = match[1];
       // Check if there's a "GitHub Copilot:" line somewhere after
-      const hasAgentResponse = lines.slice(i + 1).some(l => 
+      const hasAgentResponse = lines.slice(i + 1).some(l =>
         l.trim().startsWith('GitHub Copilot:')
       );
       if (hasAgentResponse) {
@@ -216,7 +228,7 @@ const forceLineBreaks = (text) => {
                                 nextTrimmed.startsWith('```') ||
                                 nextLine.match(/^   /) ||
                                 nextLine.match(/^\t/);
-    
+
     if (!isNextLineEmpty && !isNextLineStructure) {
       result.push(line + '  ');
     } else {
@@ -278,6 +290,11 @@ const parseContent = (content, userIdentifier) => {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
+    // Skip noise patterns (UI artifacts from long sessions)
+    if (NOISE_PATTERNS.some(pattern => pattern.test(line.trim()))) {
+      continue;
+    }
+
     // Detect code blocks
     if (line.startsWith('```')) {
       inCodeBlock = !inCodeBlock;
@@ -292,13 +309,20 @@ const parseContent = (content, userIdentifier) => {
 
     // Detect user prompt (dynamic user identifier)
     if (line.startsWith(`${userIdentifier}:`)) {
+      const promptContent = line.replace(`${userIdentifier}:`, '').trim();
+
+      // Skip continuation prompts (UI artifacts)
+      if (IGNORE_USER_PROMPTS.some(pattern => pattern.test(promptContent))) {
+        continue;
+      }
+
       if (currentSection.content.length > 0) {
         currentSection.raw = currentSection.content.join('\n');
         sections.push({ ...currentSection });
       }
       currentSection = {
         type: 'user-prompt',
-        content: [line.replace(`${userIdentifier}:`, '').trim()],
+        content: [promptContent],
         raw: '',
       };
       inAction = false; // Important: exit action mode
@@ -467,39 +491,39 @@ const cleanExcessiveLineBreaks = (text) => {
 const ensureMarkdownSpacing = (text) => {
   const lines = text.split('\n');
   const result = [];
-  
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmedLine = line.trim();
     const prevLine = i > 0 ? lines[i - 1] : '';
     const prevTrimmed = prevLine.trim();
-    
+
     // Detect headings (# to ######)
     const isHeading = /^#{1,6}\s/.test(trimmedLine);
-    
+
     // Detect the FIRST element of a list (not in an already started list)
     const isListItem = /^[-*]\s/.test(trimmedLine) || /^\d+\.\s/.test(trimmedLine);
     const prevIsListItem = /^[-*]\s/.test(prevTrimmed) || /^\d+\.\s/.test(prevTrimmed);
     const isListStart = isListItem && !prevIsListItem && prevTrimmed !== ''; // Don't detect as start if preceded by empty line
-    
+
     // Detect code blocks (opening or closing)
     const isCodeBlockMarker = trimmedLine.startsWith('```');
     const prevIsCodeBlockMarker = prevTrimmed.startsWith('```');
-    
+
     // Check if we're in a context that needs a double line break before
     const needsDoubleLineBreak = (isHeading || isListStart || isCodeBlockMarker) &&
                                  prevTrimmed !== '' &&
                                  !prevTrimmed.startsWith('---') && // Not after frontmatter
                                  !prevTrimmed.startsWith('<!--') && // Not after HTML comment
                                  !prevIsCodeBlockMarker; // Not right after another code block marker
-    
+
     // Add empty line if necessary
     if (needsDoubleLineBreak) {
       result.push('');
     }
-    
+
     result.push(line);
-    
+
     // Add empty line AFTER a heading if the next line is not empty
     if (isHeading) {
       const nextLine = i < lines.length - 1 ? lines[i + 1] : '';
@@ -508,7 +532,7 @@ const ensureMarkdownSpacing = (text) => {
       }
     }
   }
-  
+
   return result.join('\n');
 };
 
@@ -756,13 +780,13 @@ const formatChatSession = ({ inputFile, outputFile, force = false }) => {
     .join('');
 
   let formattedContent = frontmatter + formattedSections;
-  
+
   // Apply Markdown linting rules
   formattedContent = ensureMarkdownSpacing(formattedContent);
   // Clean trailing spaces (single always, double at end of paragraph)
   formattedContent = removeTrailingSpaces(formattedContent);
   // Clean excessive blank lines
-  
+
   // Clean excessive blank lines
   formattedContent = cleanExcessiveLineBreaks(formattedContent);
 
